@@ -1,0 +1,20 @@
+{
+  "chunker_version": "1.1.0",
+  "created_at": "2026-01-28T15:52:07.289213",
+  "input_file": "parser/data/moscow/all_programs.json",
+  "output_file": "rag/data/chunks_v1.jsonl",
+  "total_programs": 70,
+  "total_chunks": 298,
+  "chunks_by_type": {
+    "overview": 70,
+    "curriculum": 62,
+    "advantages": 58,
+    "career": 51,
+    "admission": 57
+  },
+  "text_length_stats": {
+    "min": 189,
+    "max": 9415,
+    "avg": 1243.1
+  }
+}
