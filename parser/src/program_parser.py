@@ -1,6 +1,7 @@
 import json
 import re
 from dataclasses import dataclass, field, asdict
+from datetime import datetime
 from pathlib import Path
 from bs4 import BeautifulSoup
 from .fetch import download
@@ -70,6 +71,9 @@ class Program:
     codes: list = field(default_factory=list)
     category: str = ""
     url: str = ""
+    campus: str = ""
+    admission_year: int = 2025
+    retrieved_at: str = ""
     budget_places: int = None
     paid_places: int = None
     duration: str = ""
@@ -100,7 +104,7 @@ SECTION_PATTERNS = {
     'admission_info': ['поступлен', 'нужно знать', 'как поступить', 'вступительн', 'егэ'],
 }
 
-def parse_page(html, config):
+def parse_page(html, config, campus="moscow", admission_year=2025):
     if isinstance(html, bytes):
         html = html.decode('utf-8', errors='replace')
     
@@ -110,6 +114,9 @@ def parse_page(html, config):
     
     p = Program(**{k: config.get(k, '' if k != 'codes' else []) 
                    for k in ['slug', 'name', 'faculty', 'codes', 'category', 'url']})
+    p.campus = campus
+    p.admission_year = admission_year
+    p.retrieved_at = datetime.now().isoformat()
     
     text = soup.get_text(' ', strip=True)
     text_lower = text.lower()
@@ -190,9 +197,12 @@ def parse_page(html, config):
     
     return p
 
-def parse_all(config_path, output_dir, limit=None):
+def parse_all(config_path, output_dir, limit=None, admission_year=2025):
     with open(config_path, encoding='utf-8') as f:
-        programs = json.load(f).get('programs', [])
+        config = json.load(f)
+    
+    campus = config.get('campus', 'moscow')
+    programs = config.get('programs', [])
     
     if limit:
         programs = programs[:limit]
@@ -213,7 +223,7 @@ def parse_all(config_path, output_dir, limit=None):
         
         (out / 'raw' / f'{slug}.html').write_bytes(html)
         
-        p = parse_page(html, cfg)
+        p = parse_page(html, cfg, campus, admission_year)
         results.append(p)
         
         (out / 'parsed' / f'{slug}.json').write_text(
