@@ -1,0 +1,14 @@
+.DS_Store
+Thumbs.db
+
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+.idea/
+.vscode/
+*.swp
+
+parser/data/
