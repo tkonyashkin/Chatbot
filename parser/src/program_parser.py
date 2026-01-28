@@ -6,8 +6,12 @@ from pathlib import Path
 from bs4 import BeautifulSoup
 from .fetch import download
 
+PIPELINE_VERSION = "1.0.0"
 MINKRIT_URL = 'https://ba.hse.ru/minkrit'
 _minkrit_cache = None
+
+REQUIRED_FIELDS = ['name', 'faculty', 'url', 'duration', 'form', 'language']
+IMPORTANT_FIELDS = ['budget_places', 'exams', 'description']
 
 def load_minkrit():
     global _minkrit_cache
@@ -86,6 +90,34 @@ class Program:
     career: str = ""
     admission_info: str = ""
     specializations: list = field(default_factory=list)
+    status: str = "success"
+    errors: list = field(default_factory=list)
+    warnings: list = field(default_factory=list)
+
+def validate_program(p):
+    errors = []
+    warnings = []
+    
+    for f in REQUIRED_FIELDS:
+        val = getattr(p, f)
+        if not val:
+            errors.append(f"missing_required:{f}")
+    
+    for f in IMPORTANT_FIELDS:
+        val = getattr(p, f)
+        if not val:
+            warnings.append(f"missing_important:{f}")
+    
+    if errors:
+        p.status = "failed"
+    elif warnings:
+        p.status = "partial"
+    else:
+        p.status = "success"
+    
+    p.errors = errors
+    p.warnings = warnings
+    return p
 
 EXAM_NAMES = {
     'математика': 'Математика', 'русский язык': 'Русский язык',
@@ -195,9 +227,47 @@ def parse_page(html, config, campus="moscow", admission_year=2025):
                 if t not in p.specializations:
                     p.specializations.append(t)
     
-    return p
+    return validate_program(p)
+
+def create_manifest(results, campus, admission_year, config_path, output_dir, started_at):
+    success = [r for r in results if r.status == "success"]
+    partial = [r for r in results if r.status == "partial"]
+    failed = [r for r in results if r.status == "failed"]
+    
+    field_coverage = {}
+    all_fields = ['budget_places', 'paid_places', 'duration', 'form', 'language', 
+                  'exams', 'description', 'what_to_study', 'advantages', 'career', 
+                  'admission_info', 'specializations']
+    
+    for f in all_fields:
+        count = sum(1 for r in results if getattr(r, f))
+        field_coverage[f] = {"count": count, "total": len(results), "percent": round(100 * count / len(results), 1)}
+    
+    manifest = {
+        "pipeline_version": PIPELINE_VERSION,
+        "created_at": datetime.now().isoformat(),
+        "started_at": started_at,
+        "config_path": str(config_path),
+        "output_dir": str(output_dir),
+        "campus": campus,
+        "admission_year": admission_year,
+        "statistics": {
+            "total": len(results),
+            "success": len(success),
+            "partial": len(partial),
+            "failed": len(failed),
+            "source_types": {"html": len(results), "pdf": 0}
+        },
+        "field_coverage": field_coverage,
+        "failed_programs": [{"slug": r.slug, "errors": r.errors} for r in failed],
+        "partial_programs": [{"slug": r.slug, "warnings": r.warnings} for r in partial]
+    }
+    
+    return manifest
 
 def parse_all(config_path, output_dir, limit=None, admission_year=2025):
+    started_at = datetime.now().isoformat()
+    
     with open(config_path, encoding='utf-8') as f:
         config = json.load(f)
     
@@ -212,13 +282,16 @@ def parse_all(config_path, output_dir, limit=None, admission_year=2025):
     (out / 'parsed').mkdir(parents=True, exist_ok=True)
     
     results = []
+    download_failed = []
+    
     for i, cfg in enumerate(programs):
         slug = cfg.get('slug', f'p{i}')
         print(f"[{i+1}/{len(programs)}] {slug}")
         
         html = download(cfg.get('url', ''))
         if not html:
-            print("  ERROR")
+            print(f"  DOWNLOAD_FAILED")
+            download_failed.append(slug)
             continue
         
         (out / 'raw' / f'{slug}.html').write_bytes(html)
@@ -229,12 +302,29 @@ def parse_all(config_path, output_dir, limit=None, admission_year=2025):
         (out / 'parsed' / f'{slug}.json').write_text(
             json.dumps(asdict(p), ensure_ascii=False, indent=2), encoding='utf-8')
         
-        print(f"  OK: {p.budget_places} бюджет")
+        status_icon = {"success": "✓", "partial": "~", "failed": "✗"}[p.status]
+        print(f"  {status_icon} {p.status}: {p.budget_places} бюджет")
     
     (out / 'all_programs.json').write_text(
         json.dumps([asdict(r) for r in results], ensure_ascii=False, indent=2), encoding='utf-8')
     
-    print(f"\nГотово: {len(results)}")
+    manifest = create_manifest(results, campus, admission_year, config_path, output_dir, started_at)
+    manifest["download_failed"] = download_failed
+    
+    (out / 'manifest.json').write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
+    
+    print(f"\n{'='*50}")
+    print(f"PIPELINE v{PIPELINE_VERSION} COMPLETED")
+    print(f"{'='*50}")
+    print(f"Total: {manifest['statistics']['total']}")
+    print(f"  ✓ Success: {manifest['statistics']['success']}")
+    print(f"  ~ Partial: {manifest['statistics']['partial']}")
+    print(f"  ✗ Failed:  {manifest['statistics']['failed']}")
+    if download_failed:
+        print(f"  ⚠ Download failed: {len(download_failed)}")
+    print(f"{'='*50}")
+    
     return results
 
 if __name__ == '__main__':
